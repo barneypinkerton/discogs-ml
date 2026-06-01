@@ -1,0 +1,64 @@
+# Paths are resolved relative to DISCOGS_DATA_ROOT unless absolute.
+
+paths:
+  csv_dir: csv
+  db_file: db/discogs.sqlite
+  labels_xml: xml/discogs_20250101_labels.xml
+  catalog_dir: catalog
+  label_data_file: catalog/label_data.json
+  label_family_file: catalog/label_family.json
+  embeddings_dir: embeddings
+  collection_embeddings: embeddings/my_collection_embeddings.npz
+  effnet_model: embeddings/discogs_artist_embeddings-effnet-bs64-1.pb
+  exports_dir: exports
+  profile_dir: profile
+  profile_releases: profile/releases.json
+  candidates_file: exports/candidates.csv
+  recommendations_file: exports/recommendations.csv
+  candidate_audio_dir: candidate_audio
+
+pipeline:
+  default_stages:
+    - build_labels
+    - sync_profile
+    - discover
+    - score
+
+discogs:
+  requests_per_min: 30
+  per_page: 50
+  timeout_s: 40
+  max_retries: 7
+
+profile:
+  collection_weight: 1.0
+  wantlist_weight: 1.5
+
+discover:
+  family_decay: 0.85
+  sibling_decay_factor: 0.7
+  artist_to_label_decay: 0.7
+  label_to_artist_decay: 0.5
+  top_artists_for_expansion: 10000
+  top_labels_for_expansion: 1500
+  candidate_pool_limit: 50000
+  compilation_pool_fraction: 0.10
+  discovery_pool_fraction: 0.45
+  genre: Electronic
+  sql_batch_size: 500
+
+score:
+  max_per_artist: 2
+  max_per_label: 3
+  top_n_export: 100
+  enrich_have_want_limit: 100
+  desirability_weight: 0.25
+  overknown_penalty_weight: 0.6
+  overknown_threshold: 500
+  metadata_score_weight: 0.05
+  style_affinity_weight: 3.0
+  country_affinity_weight: 1.5
+  year_affinity_weight: 1.5
+
+label_graph:
+  parse_progress_every: 500000

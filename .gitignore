@@ -1,0 +1,28 @@
+# Environment and secrets
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.Python
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+DiscogsData alias
+
+# Data (lives under ~/DiscogsData — see README)
+data/
+
+# Large / generated artifacts (if ever placed in-repo)
+*.sqlite
+*.sqlite3
+*.csv
+*.csv.bz2
+*.xml
+*.xml.gz
+*.npz
+*.pb
+candidate_audio/

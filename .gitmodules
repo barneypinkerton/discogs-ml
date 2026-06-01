@@ -1,0 +1,3 @@
+[submodule "vendor/discogs-xml2db"]
+	path = vendor/discogs-xml2db
+	url = https://github.com/philipmat/discogs-xml2db.git
