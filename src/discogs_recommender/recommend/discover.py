@@ -375,16 +375,21 @@ def _query_all_electronic(
         conn,
         params=[dc.genre, affinity_limit],
     )
+    affinity["bucket"] = "affinity"
+
     comp = pd.read_sql(
         _CANDIDATE_SQL.format(compilation_clause=_IS_COMPILATION),
         conn,
         params=[dc.genre, comp_limit],
     )
+    comp["bucket"] = "compilation"
+
     discovery = pd.read_sql(
         _DISCOVERY_SQL.format(compilation_clause=_NOT_COMPILATION),
         conn,
         params=[dc.genre, disc_limit],
     )
+    discovery["bucket"] = "discovery"
 
     df = (
         pd.concat([affinity, comp, discovery], ignore_index=True)

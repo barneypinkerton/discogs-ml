@@ -229,6 +229,103 @@ def apply_diversity_cap(df: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
     return build_final_recommendations(df, config, conn=None)
 
 
+def build_bucketed_recommendations(
+    df: pd.DataFrame,
+    config: AppConfig,
+    conn: sqlite3.Connection | None = None,
+    alias_map: dict[int, int] | None = None,
+) -> pd.DataFrame:
+    """Select final recommendations while guaranteeing bucket representation.
+
+    Splits the target count proportionally between the affinity and discovery
+    buckets (compilations are excluded from final recommendations). Caps are
+    shared across both buckets so e.g. an artist can't fill 2 affinity slots
+    AND 2 discovery slots. Releases with no bucket tag fall back to affinity.
+    """
+    sc = config.score
+    target = sc.top_n_export
+
+    # Derive per-bucket targets from config fractions, ignoring compilations
+    disc_fraction = getattr(config.discover, "discovery_pool_fraction", 0.45)
+    comp_fraction = getattr(config.discover, "compilation_pool_fraction", 0.10)
+    non_comp = max(1.0 - comp_fraction, 1e-9)
+    discovery_target = round(target * disc_fraction / non_comp)
+    affinity_target = target - discovery_target
+
+    logger.info(
+        "Bucketed selection targets — affinity: %s | discovery: %s",
+        affinity_target,
+        discovery_target,
+    )
+
+    if df.empty:
+        return df
+
+    ranked = ensure_master_ids(df, conn)
+
+    # Shared cap state across both buckets
+    artist_counts: dict[int | str, int] = {}
+    label_counts: dict[int | str, int] = {}
+    seen_masters: set[int] = set()
+    seen_works: set[tuple] = set()
+
+    def _pick(
+        source: pd.DataFrame,
+        n: int,
+        existing: list[pd.Series],
+    ) -> list[pd.Series]:
+        picks: list[pd.Series] = []
+        for _, row in source.iterrows():
+            if len(existing) + len(picks) >= len(existing) + n:
+                break
+            artist = _primary_artist_key(row)
+            canonical = (
+                alias_map.get(artist, artist)
+                if alias_map is not None and isinstance(artist, int)
+                else artist
+            )
+            if canonical is not None and artist_counts.get(canonical, 0) >= sc.max_per_artist:
+                continue
+            label = _primary_label_key(row)
+            if label is not None and label_counts.get(label, 0) >= sc.max_per_label:
+                continue
+            master = valid_master_id(row.get("master_id"))
+            if master is not None:
+                if master in seen_masters:
+                    continue
+                seen_masters.add(master)
+            else:
+                work_key = _work_dedup_key(row)
+                if work_key in seen_works:
+                    continue
+                seen_works.add(work_key)
+            if canonical is not None:
+                artist_counts[canonical] = artist_counts.get(canonical, 0) + 1
+            if label is not None:
+                label_counts[label] = label_counts.get(label, 0) + 1
+            picks.append(row)
+        return picks
+
+    bucket_col = ranked.get("bucket", pd.Series("affinity", index=ranked.index))
+    if not isinstance(bucket_col, pd.Series):
+        bucket_col = pd.Series("affinity", index=ranked.index)
+
+    affinity_pool = ranked[bucket_col.fillna("affinity") != "discovery"]
+    discovery_pool = ranked[bucket_col.fillna("affinity") == "discovery"]
+
+    affinity_picks = _pick(affinity_pool, affinity_target, [])
+    discovery_picks = _pick(discovery_pool, discovery_target, affinity_picks)
+
+    combined = pd.DataFrame(affinity_picks + discovery_picks)
+    logger.info(
+        "Bucketed picks — affinity: %s | discovery: %s | total: %s",
+        len(affinity_picks),
+        len(discovery_picks),
+        len(combined),
+    )
+    return combined.sort_values("score", ascending=False).reset_index(drop=True)
+
+
 def enrich_have_want(df: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
     """Fetch master-level community have/want counts for each row in *df*.
 
@@ -546,7 +643,7 @@ def score_candidates(
             len(primary_artist_ids),
             len(set(alias_map.values())),
         )
-        top = build_final_recommendations(df, config, conn, alias_map=alias_map)
+        top = build_bucketed_recommendations(df, config, conn, alias_map=alias_map)
         logger.info("Selected %s final recommendations", len(top))
 
         try:
@@ -571,6 +668,7 @@ def score_candidates(
         c
         for c in [
             "release_id",
+            "bucket",
             "title",
             "artists",
             "labels",
