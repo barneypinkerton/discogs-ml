@@ -38,6 +38,7 @@ class PathsConfig:
     profile_releases: Path
     candidates_file: Path
     recommendations_file: Path
+    top10_file: Path
     candidate_audio_dir: Path
 
 
@@ -68,8 +69,19 @@ class DiscoverConfig:
     candidate_pool_limit: int = 50_000
     compilation_pool_fraction: float = 0.10
     discovery_pool_fraction: float = 0.45
+    min_style_match_count: int = 2
     genre: str = "Electronic"
     sql_batch_size: int = 500
+
+
+@dataclass
+class AudioConfig:
+    top_n_final: int = 10
+    audio_weight: float = 0.6
+    cache_audio: bool = True
+    download_timeout_s: int = 120
+    max_videos_per_release: int = 6
+    download_workers: int = 4
 
 
 @dataclass
@@ -81,6 +93,9 @@ class ScoreConfig:
     desirability_weight: float = 0.25
     overknown_penalty_weight: float = 0.6
     overknown_threshold: int = 500
+    max_have_count: int = 600
+    max_want_count: int = 600
+    exclude_owned_artists: bool = True
     metadata_score_weight: float = 0.05
     style_affinity_weight: float = 3.0
     country_affinity_weight: float = 1.5
@@ -94,6 +109,7 @@ class AppConfig:
     profile: ProfileConfig
     discover: DiscoverConfig
     score: ScoreConfig
+    audio: AudioConfig
     pipeline_default_stages: list[str] = field(default_factory=list)
     label_graph_parse_progress_every: int = 500_000
     repo_root: Path = field(default_factory=lambda: _REPO_ROOT)
@@ -159,6 +175,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             paths_raw.get("recommendations_file", "exports/recommendations.csv"),
             data_root,
         ),
+        top10_file=_expand(
+            paths_raw.get("top10_file", "exports/top10.csv"),
+            data_root,
+        ),
         candidate_audio_dir=_expand(
             paths_raw.get("candidate_audio_dir", "candidate_audio"), data_root
         ),
@@ -168,6 +188,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     profile_raw = raw.get("profile", {})
     discover_raw = raw.get("discover", {})
     score_raw = raw.get("score", {})
+    audio_raw = raw.get("audio", {})
     pipeline = raw.get("pipeline", {})
     label_graph = raw.get("label_graph", {})
 
@@ -214,6 +235,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             discovery_pool_fraction=float(
                 discover_raw.get("discovery_pool_fraction", 0.45)
             ),
+            min_style_match_count=int(discover_raw.get("min_style_match_count", 2)),
             genre=str(discover_raw.get("genre", "Electronic")),
             sql_batch_size=int(discover_raw.get("sql_batch_size", 500)),
         ),
@@ -222,6 +244,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             max_per_label=int(score_raw.get("max_per_label", 5)),
             top_n_export=int(score_raw.get("top_n_export", 100)),
             enrich_have_want_limit=int(score_raw.get("enrich_have_want_limit", 100)),
+            max_have_count=int(score_raw.get("max_have_count", 600)),
+            max_want_count=int(score_raw.get("max_want_count", 600)),
+            exclude_owned_artists=bool(score_raw.get("exclude_owned_artists", True)),
             desirability_weight=float(score_raw.get("desirability_weight", 0.25)),
             overknown_penalty_weight=float(
                 score_raw.get("overknown_penalty_weight", 0.6)
@@ -231,6 +256,14 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             style_affinity_weight=float(score_raw.get("style_affinity_weight", 3.0)),
             country_affinity_weight=float(score_raw.get("country_affinity_weight", 1.5)),
             year_affinity_weight=float(score_raw.get("year_affinity_weight", 1.5)),
+        ),
+        audio=AudioConfig(
+            top_n_final=int(audio_raw.get("top_n_final", 10)),
+            audio_weight=float(audio_raw.get("audio_weight", 0.6)),
+            cache_audio=bool(audio_raw.get("cache_audio", True)),
+            download_timeout_s=int(audio_raw.get("download_timeout_s", 120)),
+            max_videos_per_release=int(audio_raw.get("max_videos_per_release", 6)),
+            download_workers=int(audio_raw.get("download_workers", 4)),
         ),
         pipeline_default_stages=list(
             pipeline.get(

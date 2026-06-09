@@ -337,6 +337,7 @@ _DISCOVERY_SQL = """
         FROM release_style rs
         JOIN tmp_style_affinity af ON rs.style = af.style
         GROUP BY rs.release_id
+        HAVING COUNT(*) >= {min_style_matches}
     ) sa ON r.id = sa.release_id
     WHERE rg.genre = ?
       AND r.id NOT IN (SELECT release_id FROM tmp_owned_release)
@@ -385,7 +386,10 @@ def _query_all_electronic(
     comp["bucket"] = "compilation"
 
     discovery = pd.read_sql(
-        _DISCOVERY_SQL.format(compilation_clause=_NOT_COMPILATION),
+        _DISCOVERY_SQL.format(
+            compilation_clause=_NOT_COMPILATION,
+            min_style_matches=dc.min_style_match_count,
+        ),
         conn,
         params=[dc.genre, disc_limit],
     )

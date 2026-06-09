@@ -85,6 +85,45 @@ def ensure_master_ids(
     return out
 
 
+def _build_label_canonical_map(
+    conn: sqlite3.Connection,
+    label_ids: set[int],
+    *,
+    batch_size: int = 500,
+) -> dict[int, int]:
+    """Map each label_id to its root parent for cap-bucketing.
+
+    Prevents the same label family (e.g. Soma Quality Recordings / Soma
+    Recordings Ltd.) from filling multiple cap slots.
+    """
+    if not label_ids:
+        return {}
+    ids = list(label_ids)
+    label_parent: dict[int, int | None] = {}
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i : i + batch_size]
+        p = ",".join("?" * len(batch))
+        for lid_raw, parent_raw in conn.execute(
+            f"SELECT id, parent_id FROM label WHERE id IN ({p})", batch
+        ).fetchall():
+            lid = int(lid_raw)
+            parent: int | None = None
+            if parent_raw is not None:
+                s = str(parent_raw).strip()
+                if s:
+                    try:
+                        parent = int(s)
+                    except ValueError:
+                        pass
+            label_parent[lid] = parent
+
+    canonical: dict[int, int] = {}
+    for lid in label_ids:
+        parent = label_parent.get(lid)
+        canonical[lid] = parent if (parent is not None and parent != lid) else lid
+    return canonical
+
+
 def _build_alias_canonical_map(
     conn: sqlite3.Connection,
     artist_ids: set[int],
@@ -170,6 +209,7 @@ def build_final_recommendations(
     config: AppConfig,
     conn: sqlite3.Connection | None = None,
     alias_map: dict[int, int] | None = None,
+    label_canonical_map: dict[int, int] | None = None,
 ) -> pd.DataFrame:
     """Select up to top_n_export rows with artist/label caps and no duplicate works.
 
@@ -201,7 +241,12 @@ def build_final_recommendations(
             continue
 
         label = _primary_label_key(row)
-        if label is not None and label_counts.get(label, 0) >= sc.max_per_label:
+        canonical_label = (
+            label_canonical_map.get(label, label)
+            if label_canonical_map is not None and isinstance(label, int)
+            else label
+        )
+        if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
             continue
 
         master = valid_master_id(row.get("master_id"))
@@ -217,8 +262,8 @@ def build_final_recommendations(
 
         if canonical_artist is not None:
             artist_counts[canonical_artist] = artist_counts.get(canonical_artist, 0) + 1
-        if label is not None:
-            label_counts[label] = label_counts.get(label, 0) + 1
+        if canonical_label is not None:
+            label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
         keep_rows.append(row)
 
     return pd.DataFrame(keep_rows).reset_index(drop=True)
@@ -234,6 +279,7 @@ def build_bucketed_recommendations(
     config: AppConfig,
     conn: sqlite3.Connection | None = None,
     alias_map: dict[int, int] | None = None,
+    label_canonical_map: dict[int, int] | None = None,
 ) -> pd.DataFrame:
     """Select final recommendations while guaranteeing bucket representation.
 
@@ -287,7 +333,12 @@ def build_bucketed_recommendations(
             if canonical is not None and artist_counts.get(canonical, 0) >= sc.max_per_artist:
                 continue
             label = _primary_label_key(row)
-            if label is not None and label_counts.get(label, 0) >= sc.max_per_label:
+            canonical_label = (
+                label_canonical_map.get(label, label)
+                if label_canonical_map is not None and isinstance(label, int)
+                else label
+            )
+            if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
                 continue
             master = valid_master_id(row.get("master_id"))
             if master is not None:
@@ -301,8 +352,8 @@ def build_bucketed_recommendations(
                 seen_works.add(work_key)
             if canonical is not None:
                 artist_counts[canonical] = artist_counts.get(canonical, 0) + 1
-            if label is not None:
-                label_counts[label] = label_counts.get(label, 0) + 1
+            if canonical_label is not None:
+                label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
             picks.append(row)
         return picks
 
@@ -361,6 +412,7 @@ def enrich_have_want(df: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
     df["want_count"] = np.nan
     df["release_have_count"] = np.nan
     df["release_want_count"] = np.nan
+    df["image_url"] = ""
     subset = df.head(limit)
 
     # Cache release payloads within this call to avoid re-fetching main releases
@@ -383,6 +435,9 @@ def enrich_have_want(df: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
             release_want = community.get("want")
             df.at[idx, "release_have_count"] = release_have
             df.at[idx, "release_want_count"] = release_want
+            images = data.get("images") or []
+            if images:
+                df.at[idx, "image_url"] = images[0].get("uri", "")
 
             # Default to release-level; upgrade to master's main release if available
             have, want = release_have, release_want
@@ -631,6 +686,31 @@ def score_candidates(
 
         score_kwargs = dict(style_aff=style_aff, country_aff=country_aff, year_aff=year_aff, user_prefs=user_prefs)
         df = compute_final_score(df, config, **score_kwargs)
+
+        # Exclude releases by artists/labels already in the collection or wantlist
+        if config.score.exclude_owned_artists and profile_path.is_file():
+            owned_artist_ids: set[int] = {
+                int(aid)
+                for row in profile
+                for aid in (row.get("artist_ids") or [])
+            }
+            owned_label_ids: set[int] = {
+                int(lid)
+                for row in profile
+                for lid in (row.get("label_ids") or [])
+            }
+            before_artist = len(df)
+            df = df[
+                df["artist_ids"].apply(
+                    lambda val: not any(
+                        int(aid) in owned_artist_ids for aid in _parse_artist_ids(val)
+                    )
+                )
+            ].reset_index(drop=True)
+            logger.info(
+                "Owned-artist filter: %s → %s candidates", before_artist, len(df)
+            )
+
         primary_artist_ids = {
             int(ids[0])
             for val in df["artist_ids"]
@@ -643,13 +723,42 @@ def score_candidates(
             len(primary_artist_ids),
             len(set(alias_map.values())),
         )
-        top = build_bucketed_recommendations(df, config, conn, alias_map=alias_map)
+        primary_label_ids = {
+            int(ids[0])
+            for val in df["label_ids"]
+            for ids in [_parse_artist_ids(val)]
+            if ids
+        }
+        label_canonical_map = _build_label_canonical_map(conn, primary_label_ids)
+        logger.info(
+            "Label map built: %s labels → %s canonical groups",
+            len(primary_label_ids),
+            len(set(label_canonical_map.values())),
+        )
+        top = build_bucketed_recommendations(
+            df, config, conn, alias_map=alias_map, label_canonical_map=label_canonical_map
+        )
         logger.info("Selected %s final recommendations", len(top))
 
         try:
             top = enrich_have_want(top, config)
         except ValueError as exc:
             logger.warning("Skipping have/want enrichment: %s", exc)
+
+        # Hard caps on have/want — exclude records that are too well-known
+        sc = config.score
+        before_caps = len(top)
+        top = top[
+            top["have_count"].isna() | (top["have_count"] <= sc.max_have_count)
+        ].reset_index(drop=True)
+        top = top[
+            top["want_count"].isna() | (top["want_count"] <= sc.max_want_count)
+        ].reset_index(drop=True)
+        if len(top) != before_caps:
+            logger.info(
+                "have/want cap filter (have≤%s, want≤%s): %s → %s",
+                sc.max_have_count, sc.max_want_count, before_caps, len(top),
+            )
 
         top = compute_final_score(top, config, **score_kwargs)
         if user_prefs and not user_prefs.is_empty():
@@ -686,6 +795,7 @@ def score_candidates(
             "desirability",
             "overknown_penalty",
             "score",
+            "image_url",
         ]
         if c in top.columns
     ]

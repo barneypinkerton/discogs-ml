@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from discogs_recommender.audio.rank import run_audio_rank
 from discogs_recommender.catalog.label_graph import build_label_graph
 from discogs_recommender.config import AppConfig
 from discogs_recommender.profile.sync import sync_profile
@@ -18,6 +19,7 @@ STAGES: list[str] = [
     "sync_profile",
     "discover",
     "score",
+    "audio_rank",
 ]
 
 STAGE_ORDER = STAGES
@@ -45,6 +47,8 @@ def run_stage(
         discover_candidates(config, force=force)
     elif name == "score":
         score_candidates(config, force=force, user_prefs=user_prefs)
+    elif name == "audio_rank":
+        run_audio_rank(config, force=force)
     logger.info("Finished stage: %s", name)
 
 

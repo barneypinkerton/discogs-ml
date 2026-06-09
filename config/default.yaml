@@ -15,6 +15,7 @@ paths:
   profile_releases: profile/releases.json
   candidates_file: exports/candidates.csv
   recommendations_file: exports/recommendations.csv
+  top10_file: exports/top10.csv
   candidate_audio_dir: candidate_audio
 
 pipeline:
@@ -44,6 +45,7 @@ discover:
   candidate_pool_limit: 50000
   compilation_pool_fraction: 0.10
   discovery_pool_fraction: 0.45
+  min_style_match_count: 2
   genre: Electronic
   sql_batch_size: 500
 
@@ -55,10 +57,21 @@ score:
   desirability_weight: 0.25
   overknown_penalty_weight: 0.6
   overknown_threshold: 500
+  max_have_count: 600
+  max_want_count: 600
+  exclude_owned_artists: true
   metadata_score_weight: 0.05
   style_affinity_weight: 3.0
   country_affinity_weight: 1.5
   year_affinity_weight: 1.5
+
+audio:
+  top_n_final: 10
+  audio_weight: 0.6
+  cache_audio: true
+  download_timeout_s: 120
+  max_videos_per_release: 6
+  download_workers: 4
 
 label_graph:
   parse_progress_every: 500000
