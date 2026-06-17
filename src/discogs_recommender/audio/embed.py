@@ -9,6 +9,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aiff", ".aif", ".m4a"}
+
 
 def _load_essentia_model(model_path: Path):
     try:
@@ -113,3 +115,67 @@ def compute_candidate_embeddings(
         len(audio_paths),
     )
     return results
+
+
+def build_vibe_profile(
+    music_dir: Path,
+    model_path: Path,
+    save_path: Path,
+    *,
+    force: bool = False,
+) -> Path:
+    """Embed every audio file in *music_dir* and save an NPZ taste profile.
+
+    The saved file contains 'filenames', 'embeddings', and 'centroid' keys —
+    the same format expected by audio_rank's _load_profile_centroid.
+
+    Prints progress directly (intended for interactive wizard use).
+    """
+    if save_path.exists() and not force:
+        print(f"  Vibe profile already exists at {save_path} (use --force to rebuild)")
+        return save_path
+
+    audio_files = sorted(
+        p for p in music_dir.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS
+    )
+    if not audio_files:
+        raise ValueError(f"No audio files found in {music_dir}")
+
+    print(f"  Found {len(audio_files)} audio file(s) — loading EffNet model …")
+    model = _load_essentia_model(model_path)
+
+    filenames: list[str] = []
+    embeddings: list[np.ndarray] = []
+
+    for i, path in enumerate(audio_files, 1):
+        emb = embed_audio_file(path, model)
+        if emb is not None:
+            filenames.append(path.name)
+            embeddings.append(emb)
+            print(f"  [{i}/{len(audio_files)}] {path.name}")
+        else:
+            print(f"  [{i}/{len(audio_files)}] SKIP {path.name}")
+
+    if not embeddings:
+        raise RuntimeError("No tracks could be embedded — check audio files and model.")
+
+    emb_matrix = np.array(embeddings, dtype=np.float32)
+    centroid = emb_matrix.mean(axis=0, keepdims=True)
+
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(save_path, filenames=filenames, embeddings=emb_matrix, centroid=centroid)
+
+    print(f"\n  Embedded {len(embeddings)}/{len(audio_files)} tracks")
+    print(f"  Saved vibe profile → {save_path}")
+
+    try:
+        from sklearn.metrics.pairwise import cosine_similarity as cos_sim  # type: ignore[import]
+        sims = cos_sim(emb_matrix, centroid).ravel()
+        ranked = sorted(zip(filenames, sims), key=lambda x: x[1], reverse=True)
+        print("  Most representative:")
+        for name, sim in ranked[:3]:
+            print(f"    {sim:.4f}  {name}")
+    except ImportError:
+        pass
+
+    return save_path

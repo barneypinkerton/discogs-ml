@@ -71,7 +71,7 @@ def _run_wizard(config: "AppConfig") -> UserPreferences:  # type: ignore[name-de
 
     conn = sqlite3.connect(config.paths.db_path)
     try:
-        return run_wizard(conn)
+        return run_wizard(conn, config)
     finally:
         conn.close()
 

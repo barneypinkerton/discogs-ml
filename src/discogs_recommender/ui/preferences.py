@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -12,6 +13,7 @@ class UserPreferences:
     year_from: int | None = None
     year_to: int | None = None
     boost_strength: float = 1.0
+    vibe_profile_path: Path | None = None
 
     def is_empty(self) -> bool:
         return (

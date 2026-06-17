@@ -60,6 +60,8 @@ def _normalize_series(s: pd.Series) -> pd.Series:
 def audio_rank(
     df: pd.DataFrame,
     config: AppConfig,
+    *,
+    profile_path: Path | None = None,
 ) -> pd.DataFrame:
     """Take the top-100 recommendations and return the top-N refined by audio.
 
@@ -82,7 +84,10 @@ def audio_rank(
 
     embeddings = compute_candidate_embeddings(audio_paths, config.paths.effnet_model)
 
-    profile_centroid = _load_profile_centroid(config.paths.collection_embeddings)
+    active_profile = profile_path or config.paths.collection_embeddings
+    if profile_path:
+        logger.info("Using custom vibe profile: %s", profile_path)
+    profile_centroid = _load_profile_centroid(active_profile)
 
     # Verify dimension compatibility
     sample_emb = next(iter(embeddings.values()))
@@ -136,25 +141,35 @@ def audio_rank(
     return top
 
 
-def run_audio_rank(config: AppConfig, *, force: bool = False) -> Path:
-    """Read recommendations.csv, run audio ranking, write top10.csv."""
-    in_path = config.paths.recommendations_file
-    out_path = config.paths.top10_file
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def _next_top10_path(exports_dir: Path) -> Path:
+    """Return the next versioned path, e.g. exports/top10/top10_v3.csv."""
+    top10_dir = exports_dir / "top10"
+    top10_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(top10_dir.glob("top10_v*.csv"))
+    if not existing:
+        next_v = 1
+    else:
+        import re
+        nums = [int(m.group(1)) for f in existing if (m := re.search(r"top10_v(\d+)\.csv", f.name))]
+        next_v = max(nums) + 1 if nums else 1
+    return top10_dir / f"top10_v{next_v}.csv"
 
-    if out_path.is_file() and not force:
-        logger.info("Top-10 cache at %s (use --force to rebuild)", out_path)
-        return out_path
+
+def run_audio_rank(config: AppConfig, *, force: bool = False, profile_path: Path | None = None) -> Path:
+    """Read recommendations.csv, run audio ranking, write a versioned top10 CSV."""
+    in_path = config.paths.recommendations_file
 
     if not in_path.is_file():
         raise FileNotFoundError(
             f"Recommendations not found at {in_path}. Run: python main.py score"
         )
 
+    out_path = _next_top10_path(config.paths.exports_dir)
+
     df = pd.read_csv(in_path)
     logger.info("Loaded %s recommendations for audio ranking", len(df))
 
-    top = audio_rank(df, config)
+    top = audio_rank(df, config, profile_path=profile_path)
 
     export_cols = [
         c for c in [

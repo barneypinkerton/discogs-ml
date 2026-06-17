@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
+from pathlib import Path
 
 import questionary
 
@@ -36,12 +38,15 @@ _BOOST_CHOICES = [
 ]
 
 
-def run_wizard(conn: sqlite3.Connection) -> UserPreferences:
+def run_wizard(conn: sqlite3.Connection, config=None) -> UserPreferences:
     """Prompt the user for explicit style/country/year preferences.
 
     Choices are derived from the actual DB so only real options are shown.
     Returns a :class:`UserPreferences` that :func:`compute_final_score` will
     apply on top of the learned profile affinities.
+
+    If *config* is provided, also offers to build a custom vibe-profile NPZ
+    from a folder of favourite songs for use in audio ranking.
     """
     print("\n=== Recommendation Preferences ===")
     print("Learned affinities from your collection/wantlist are always applied.")
@@ -85,12 +90,17 @@ def run_wizard(conn: sqlite3.Connection) -> UserPreferences:
         if result is not None:
             boost_strength = result
 
+    vibe_profile_path: Path | None = None
+    if config is not None:
+        vibe_profile_path = _ask_vibe_profile(config)
+
     prefs = UserPreferences(
         preferred_styles=selected_styles,
         preferred_countries=selected_countries,
         year_from=year_from,
         year_to=year_to,
         boost_strength=boost_strength,
+        vibe_profile_path=vibe_profile_path,
     )
 
     if prefs.is_empty():
@@ -105,4 +115,56 @@ def run_wizard(conn: sqlite3.Connection) -> UserPreferences:
             parts.append(f"years {year_from}–{year_to}")
         print(f"\nPreferences: {' | '.join(parts)} | boost +{boost_strength}\n")
 
+    if vibe_profile_path:
+        print(f"Audio vibe profile: {vibe_profile_path.name}\n")
+
     return prefs
+
+
+def _ask_vibe_profile(config) -> Path | None:
+    """Optionally build a custom vibe-profile NPZ from a folder of songs."""
+    print("\n=== Audio Vibe Profile ===")
+    wants_vibe = questionary.confirm(
+        "Build a custom audio vibe from specific songs? (uses EffNet — takes a minute)",
+        default=False,
+    ).ask()
+
+    if not wants_vibe:
+        return None
+
+    music_dir_str = questionary.path(
+        "Folder containing your favourite songs (MP3/WAV/FLAC):",
+    ).ask()
+    if not music_dir_str:
+        print("  No folder given — skipping vibe profile.")
+        return None
+
+    music_dir = Path(music_dir_str.replace("\\ ", " ")).expanduser().resolve()
+    if not music_dir.is_dir():
+        print(f"  Folder not found: {music_dir} — skipping.")
+        return None
+
+    default_name = f"vibe_{date.today().isoformat()}.npz"
+    profile_name = (
+        questionary.text(
+            "Name for this vibe profile (saved to your embeddings folder):",
+            default=default_name,
+        ).ask()
+        or default_name
+    ).strip()
+    if not profile_name.endswith(".npz"):
+        profile_name += ".npz"
+
+    save_path = config.paths.embeddings_dir / profile_name
+
+    print(f"\nBuilding vibe profile from {music_dir} …")
+    try:
+        from discogs_recommender.audio.embed import build_vibe_profile
+        return build_vibe_profile(
+            music_dir,
+            config.paths.effnet_model,
+            save_path,
+        )
+    except Exception as exc:
+        print(f"  ERROR building vibe profile: {exc}")
+        return None

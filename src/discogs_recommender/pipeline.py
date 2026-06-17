@@ -48,7 +48,8 @@ def run_stage(
     elif name == "score":
         score_candidates(config, force=force, user_prefs=user_prefs)
     elif name == "audio_rank":
-        run_audio_rank(config, force=force)
+        profile_path = user_prefs.vibe_profile_path if user_prefs else None
+        run_audio_rank(config, force=force, profile_path=profile_path)
     logger.info("Finished stage: %s", name)
 
 
