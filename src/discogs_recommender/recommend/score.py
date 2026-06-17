@@ -70,6 +70,11 @@ def _primary_label_key(row: pd.Series) -> int | str | None:
     return labels[0] if labels else None
 
 
+def _primary_style(row: pd.Series) -> str | None:
+    styles = _parse_list_column(row.get("styles"))
+    return styles[0] if styles else None
+
+
 def _work_dedup_key(row: pd.Series) -> tuple[int | str | None, str]:
     return (_primary_artist_key(row), _normalize_title(row.get("title")))
 
@@ -223,6 +228,7 @@ def build_final_recommendations(
     ranked = ensure_master_ids(df, conn)
     artist_counts: dict[int | str, int] = {}
     label_counts: dict[int | str, int] = {}
+    style_counts: dict[str, int] = {}
     seen_masters: set[int] = set()
     seen_works: set[tuple[int | str | None, str]] = set()
     keep_rows: list[pd.Series] = []
@@ -249,6 +255,10 @@ def build_final_recommendations(
         if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
             continue
 
+        style = _primary_style(row)
+        if style is not None and style_counts.get(style, 0) >= sc.max_per_style:
+            continue
+
         master = valid_master_id(row.get("master_id"))
         if master is not None:
             if master in seen_masters:
@@ -264,6 +274,8 @@ def build_final_recommendations(
             artist_counts[canonical_artist] = artist_counts.get(canonical_artist, 0) + 1
         if canonical_label is not None:
             label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
+        if style is not None:
+            style_counts[style] = style_counts.get(style, 0) + 1
         keep_rows.append(row)
 
     return pd.DataFrame(keep_rows).reset_index(drop=True)
@@ -312,6 +324,7 @@ def build_bucketed_recommendations(
     # Shared cap state across both buckets
     artist_counts: dict[int | str, int] = {}
     label_counts: dict[int | str, int] = {}
+    style_counts: dict[str, int] = {}
     seen_masters: set[int] = set()
     seen_works: set[tuple] = set()
 
@@ -340,6 +353,9 @@ def build_bucketed_recommendations(
             )
             if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
                 continue
+            style = _primary_style(row)
+            if style is not None and style_counts.get(style, 0) >= sc.max_per_style:
+                continue
             master = valid_master_id(row.get("master_id"))
             if master is not None:
                 if master in seen_masters:
@@ -354,6 +370,8 @@ def build_bucketed_recommendations(
                 artist_counts[canonical] = artist_counts.get(canonical, 0) + 1
             if canonical_label is not None:
                 label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
+            if style is not None:
+                style_counts[style] = style_counts.get(style, 0) + 1
             picks.append(row)
         return picks
 
@@ -559,8 +577,12 @@ def compute_final_score(
     if not isinstance(want, pd.Series):
         want = pd.Series(want, index=df.index)
 
-    # have_count/want_count are master-level (set by enrich_have_want)
-    desirability = np.log1p(want) - np.log1p(have + 1.0)
+    # Normalise metadata_score to [0,1] so the weight is meaningful regardless of raw scale
+    meta_max = base.max()
+    norm_base = (base / meta_max) if meta_max > 0 else base
+
+    # Desirability rewards high want relative to have (ratio-based, not difference-based)
+    desirability = np.log1p(want / (have + 1.0))
     overknown_penalty = np.log1p(np.maximum(have - sc.overknown_threshold, 0)) / np.log1p(5000)
 
     # Style affinity — max affinity across the release's styles
@@ -615,7 +637,7 @@ def compute_final_score(
     df["country_boost"] = country_boost
     df["year_boost"] = year_boost
     df["score"] = (
-        sc.metadata_score_weight * base
+        sc.metadata_score_weight * norm_base
         + sc.desirability_weight * desirability
         - sc.overknown_penalty_weight * overknown_penalty
         + style_boost

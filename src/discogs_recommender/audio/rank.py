@@ -19,11 +19,13 @@ from discogs_recommender.audio.embed import (
 logger = logging.getLogger(__name__)
 
 
-def _load_profile_centroid(embeddings_path: Path) -> np.ndarray:
-    """Return the collection taste-profile centroid vector.
+def _load_profile_centroids(embeddings_path: Path, n_clusters: int = 1) -> np.ndarray:
+    """Return profile centroids as a (k, dim) float32 array.
 
-    Prefers the pre-computed weighted 'centroid' key if present; falls back to
-    the mean of the raw 'embeddings' array otherwise.
+    When n_clusters=1 returns the mean centroid.
+    When n_clusters>1 runs K-means on the raw per-track embeddings so each
+    sub-genre cluster in the collection gets its own centroid. Candidates are
+    then scored against the nearest one (max cosine similarity).
     """
     if not embeddings_path.is_file():
         raise FileNotFoundError(
@@ -31,27 +33,39 @@ def _load_profile_centroid(embeddings_path: Path) -> np.ndarray:
             "Run the collection embedding step first to generate this file."
         )
     data = np.load(embeddings_path)
-    if "centroid" in data:
-        centroid = np.asarray(data["centroid"]).squeeze().astype(np.float32)
-        logger.info("Loaded pre-computed collection centroid (dim=%s)", centroid.shape[0])
+    embs = data["embeddings"].astype(np.float32) if "embeddings" in data else data[list(data.keys())[0]].astype(np.float32)
+
+    k = min(n_clusters, len(embs))
+
+    if k <= 1:
+        centroid = np.mean(embs, axis=0, keepdims=True)
+        logger.info("Single collection centroid (dim=%s, tracks=%s)", centroid.shape[1], len(embs))
         return centroid
-    if "embeddings" in data:
-        embs = data["embeddings"]
-    else:
-        key = list(data.keys())[0]
-        logger.debug("Using npz key '%s' as embeddings array", key)
-        embs = data[key]
-    centroid = np.mean(embs, axis=0).astype(np.float32)
-    logger.info("Computed collection centroid from %s embeddings (dim=%s)", len(embs), centroid.shape[0])
-    return centroid
+
+    try:
+        from sklearn.cluster import KMeans  # type: ignore[import]
+    except ImportError as exc:
+        raise ImportError("scikit-learn is required for multi-centroid mode") from exc
+
+    km = KMeans(n_clusters=k, random_state=42, n_init=10)
+    km.fit(embs)
+    centroids = km.cluster_centers_.astype(np.float32)
+    sizes = np.bincount(km.labels_).tolist()
+    logger.info("K-means profile: %s clusters from %s tracks (sizes: %s)", k, len(embs), sizes)
+    return centroids
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0 or norm_b == 0:
+def _max_cosine_similarity(emb: np.ndarray, centroids: np.ndarray) -> float:
+    """Return the highest cosine similarity between emb and any centroid row."""
+    emb_norm = np.linalg.norm(emb)
+    if emb_norm == 0:
         return 0.0
-    return float(np.dot(a, b) / (norm_a * norm_b))
+    centroid_norms = np.linalg.norm(centroids, axis=1)
+    valid = centroid_norms > 0
+    if not np.any(valid):
+        return 0.0
+    sims = (centroids[valid] @ emb) / (centroid_norms[valid] * emb_norm)
+    return float(np.max(sims))
 
 
 def _normalize_series(s: pd.Series) -> pd.Series:
@@ -108,20 +122,20 @@ def audio_rank(
     active_profile = profile_path or config.paths.collection_embeddings
     if profile_path:
         logger.info("Using custom vibe profile: %s", profile_path)
-    profile_centroid = _load_profile_centroid(active_profile)
+    profile_centroids = _load_profile_centroids(active_profile, n_clusters=ac.n_clusters)
 
     # Verify dimension compatibility
     sample_emb = next(iter(embeddings.values()))
-    if sample_emb.shape != profile_centroid.shape:
+    if sample_emb.shape[0] != profile_centroids.shape[1]:
         raise ValueError(
-            f"Embedding dimension mismatch: candidate={sample_emb.shape} "
-            f"vs profile={profile_centroid.shape}. "
+            f"Embedding dimension mismatch: candidate={sample_emb.shape[0]} "
+            f"vs profile={profile_centroids.shape[1]}. "
             "Ensure you used the same EffNet model to build both."
         )
 
     df = df.copy()
     df["audio_sim"] = df["release_id"].map(
-        lambda rid: _cosine_similarity(embeddings[int(rid)], profile_centroid)
+        lambda rid: _max_cosine_similarity(embeddings[int(rid)], profile_centroids)
         if int(rid) in embeddings
         else 0.0
     )
