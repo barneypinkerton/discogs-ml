@@ -91,7 +91,6 @@ class AudioConfig:
 class ScoreConfig:
     max_per_artist: int = 2
     max_per_label: int = 3
-    max_per_style: int = 3
     top_n_export: int = 300
     enrich_have_want_limit: int = 300
     desirability_weight: float = 0.25
@@ -253,7 +252,6 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         score=ScoreConfig(
             max_per_artist=int(score_raw.get("max_per_artist", 3)),
             max_per_label=int(score_raw.get("max_per_label", 5)),
-            max_per_style=int(score_raw.get("max_per_style", 3)),
             top_n_export=int(score_raw.get("top_n_export", 300)),
             enrich_have_want_limit=int(score_raw.get("enrich_have_want_limit", 300)),
             max_have_count=int(score_raw.get("max_have_count", 600)),
