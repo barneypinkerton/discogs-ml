@@ -52,15 +52,16 @@ discover:
 score:
   max_per_artist: 2
   max_per_label: 3
-  top_n_export: 100
-  enrich_have_want_limit: 100
+  max_per_style: 3
+  top_n_export: 300
+  enrich_have_want_limit: 300
   desirability_weight: 0.25
   overknown_penalty_weight: 0.6
   overknown_threshold: 500
   max_have_count: 600
   max_want_count: 600
   exclude_owned_artists: true
-  metadata_score_weight: 0.05
+  metadata_score_weight: 0.4
   style_affinity_weight: 3.0
   country_affinity_weight: 1.5
   year_affinity_weight: 1.5
@@ -72,6 +73,8 @@ audio:
   download_timeout_s: 120
   max_videos_per_release: 6
   download_workers: 4
+  history_exclusion_runs: 3
+  n_clusters: 4
 
 label_graph:
   parse_progress_every: 500000
