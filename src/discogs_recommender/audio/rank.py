@@ -10,7 +10,11 @@ import pandas as pd
 
 from discogs_recommender.config import AppConfig
 from discogs_recommender.audio.fetch import fetch_and_download
-from discogs_recommender.audio.embed import compute_candidate_embeddings
+from discogs_recommender.audio.embed import (
+    compute_candidate_embeddings,
+    load_embedding_cache,
+    save_embedding_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,8 @@ def audio_rank(
     ac = config.audio
 
     release_ids = df["release_id"].astype(int).tolist()
+
+    # Always fetch audio (skips download for already-cached files); ensures url_map is complete
     audio_paths, url_map = fetch_and_download(release_ids, config)
 
     if not audio_paths:
@@ -82,7 +88,22 @@ def audio_rank(
         )
         return df.head(ac.top_n_final).copy()
 
-    embeddings = compute_candidate_embeddings(audio_paths, config.paths.effnet_model)
+    # Load persisted embedding cache; only run EffNet on releases not yet cached
+    cache_path = config.paths.candidate_embeddings_cache
+    emb_cache = load_embedding_cache(cache_path)
+    to_embed = {rid: paths for rid, paths in audio_paths.items() if rid not in emb_cache}
+
+    logger.info(
+        "Embedding cache: %s hits, %s to embed (cache at %s)",
+        len(audio_paths) - len(to_embed), len(to_embed), cache_path,
+    )
+
+    if to_embed:
+        new_embeddings = compute_candidate_embeddings(to_embed, config.paths.effnet_model)
+        emb_cache.update(new_embeddings)
+        save_embedding_cache(cache_path, emb_cache)
+
+    embeddings = {rid: emb_cache[rid] for rid in release_ids if rid in emb_cache}
 
     active_profile = profile_path or config.paths.collection_embeddings
     if profile_path:
@@ -141,6 +162,25 @@ def audio_rank(
     return top
 
 
+def _load_recent_recommendation_ids(exports_dir: Path, n_runs: int) -> set[int]:
+    """Return release_ids that appeared in the last *n_runs* versioned top10 files."""
+    if n_runs <= 0:
+        return set()
+    top10_dir = exports_dir / "top10"
+    if not top10_dir.is_dir():
+        return set()
+    existing = sorted(top10_dir.glob("top10_v*.csv"))
+    recent = existing[-n_runs:]
+    seen: set[int] = set()
+    for path in recent:
+        try:
+            df = pd.read_csv(path, usecols=["release_id"])
+            seen.update(df["release_id"].dropna().astype(int).tolist())
+        except Exception as exc:
+            logger.debug("Could not read history file %s: %s", path, exc)
+    return seen
+
+
 def _next_top10_path(exports_dir: Path) -> Path:
     """Return the next versioned path, e.g. exports/top10/top10_v3.csv."""
     top10_dir = exports_dir / "top10"
@@ -168,6 +208,25 @@ def run_audio_rank(config: AppConfig, *, force: bool = False, profile_path: Path
 
     df = pd.read_csv(in_path)
     logger.info("Loaded %s recommendations for audio ranking", len(df))
+
+    n_history = config.audio.history_exclusion_runs
+    if n_history > 0:
+        recent_ids = _load_recent_recommendation_ids(config.paths.exports_dir, n_history)
+        if recent_ids:
+            before = len(df)
+            df = df[~df["release_id"].astype(int).isin(recent_ids)].reset_index(drop=True)
+            excluded = before - len(df)
+            logger.info(
+                "History exclusion (last %s runs): removed %s already-recommended releases "
+                "(%s → %s candidates)",
+                n_history, excluded, before, len(df),
+            )
+            if len(df) < config.audio.top_n_final:
+                logger.warning(
+                    "Only %s candidates remain after history exclusion — "
+                    "reduce history_exclusion_runs or run score stage again",
+                    len(df),
+                )
 
     top = audio_rank(df, config, profile_path=profile_path)
 
