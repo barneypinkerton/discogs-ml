@@ -51,7 +51,10 @@ class DiscogsClient:
                     params=params,
                     timeout=self.config.timeout_s,
                 )
-                if response.status_code in (429, 500, 502, 503, 504):
+                if response.status_code == 500:
+                    # 500 = broken resource on Discogs' side — retrying won't help
+                    raise RuntimeError(f"HTTP 500 for {what} — skipping")
+                if response.status_code in (429, 502, 503, 504):
                     sleep_for = self._backoff(attempt)
                     logger.warning(
                         "[%s retry %s] HTTP %s; sleep %.1fs",
