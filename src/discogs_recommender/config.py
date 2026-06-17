@@ -84,21 +84,23 @@ class AudioConfig:
     max_videos_per_release: int = 6
     download_workers: int = 4
     history_exclusion_runs: int = 3
+    n_clusters: int = 4
 
 
 @dataclass
 class ScoreConfig:
     max_per_artist: int = 2
     max_per_label: int = 3
-    top_n_export: int = 100
-    enrich_have_want_limit: int = 100
+    max_per_style: int = 3
+    top_n_export: int = 200
+    enrich_have_want_limit: int = 200
     desirability_weight: float = 0.25
     overknown_penalty_weight: float = 0.6
     overknown_threshold: int = 500
     max_have_count: int = 600
     max_want_count: int = 600
     exclude_owned_artists: bool = True
-    metadata_score_weight: float = 0.05
+    metadata_score_weight: float = 0.4
     style_affinity_weight: float = 3.0
     country_affinity_weight: float = 1.5
     year_affinity_weight: float = 1.5
@@ -251,8 +253,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         score=ScoreConfig(
             max_per_artist=int(score_raw.get("max_per_artist", 3)),
             max_per_label=int(score_raw.get("max_per_label", 5)),
-            top_n_export=int(score_raw.get("top_n_export", 100)),
-            enrich_have_want_limit=int(score_raw.get("enrich_have_want_limit", 100)),
+            max_per_style=int(score_raw.get("max_per_style", 3)),
+            top_n_export=int(score_raw.get("top_n_export", 200)),
+            enrich_have_want_limit=int(score_raw.get("enrich_have_want_limit", 200)),
             max_have_count=int(score_raw.get("max_have_count", 600)),
             max_want_count=int(score_raw.get("max_want_count", 600)),
             exclude_owned_artists=bool(score_raw.get("exclude_owned_artists", True)),
@@ -261,7 +264,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
                 score_raw.get("overknown_penalty_weight", 0.6)
             ),
             overknown_threshold=int(score_raw.get("overknown_threshold", 500)),
-            metadata_score_weight=float(score_raw.get("metadata_score_weight", 0.05)),
+            metadata_score_weight=float(score_raw.get("metadata_score_weight", 0.4)),
             style_affinity_weight=float(score_raw.get("style_affinity_weight", 3.0)),
             country_affinity_weight=float(score_raw.get("country_affinity_weight", 1.5)),
             year_affinity_weight=float(score_raw.get("year_affinity_weight", 1.5)),
@@ -274,6 +277,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             max_videos_per_release=int(audio_raw.get("max_videos_per_release", 6)),
             download_workers=int(audio_raw.get("download_workers", 4)),
             history_exclusion_runs=int(audio_raw.get("history_exclusion_runs", 3)),
+            n_clusters=int(audio_raw.get("n_clusters", 4)),
         ),
         pipeline_default_stages=list(
             pipeline.get(
