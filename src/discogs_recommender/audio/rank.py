@@ -149,9 +149,13 @@ def audio_rank(
     norm_meta = _normalize_series(df[meta_col].fillna(0).astype(float))
     norm_audio = _normalize_series(df["audio_sim"])
 
-    df["audio_blend_score"] = (
-        ac.audio_weight * norm_audio + (1.0 - ac.audio_weight) * norm_meta
-    )
+    raw_blend = ac.audio_weight * norm_audio + (1.0 - ac.audio_weight) * norm_meta
+
+    # Penalise pure-discovery candidates so affinity picks take priority when
+    # audio similarity is comparable. Discovery picks have no style/country/year
+    # match and can otherwise crowd out on-genre affinity picks.
+    discovery_mask = df.get("bucket", pd.Series("affinity", index=df.index)) == "discovery"
+    df["audio_blend_score"] = raw_blend.where(~discovery_mask, raw_blend * 0.8)
 
     top = (
         df.sort_values("audio_blend_score", ascending=False)
