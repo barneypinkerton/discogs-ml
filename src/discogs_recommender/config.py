@@ -83,7 +83,7 @@ class AudioConfig:
     download_timeout_s: int = 120
     max_videos_per_release: int = 6
     download_workers: int = 4
-    history_exclusion_runs: int = 1
+    history_exclusion_runs: int = 0
     n_clusters: int = 4
 
 

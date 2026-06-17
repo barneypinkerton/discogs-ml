@@ -72,7 +72,7 @@ audio:
   download_timeout_s: 120
   max_videos_per_release: 6
   download_workers: 4
-  history_exclusion_runs: 1
+  history_exclusion_runs: 0
   n_clusters: 4
 
 label_graph:
