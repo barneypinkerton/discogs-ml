@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+# Prefer the Homebrew yt-dlp (newer, Python-version-independent) over any
+# pip-installed version that may be pinned to an older YouTube extractor.
+_YTDLP_CANDIDATES = ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp"]
+_YTDLP_BIN: str = next(
+    (p for p in _YTDLP_CANDIDATES if Path(p).exists()),
+    shutil.which("yt-dlp") or "yt-dlp",
+)
 
 from discogs_recommender.config import AppConfig
 from discogs_recommender.profile.discogs_client import DiscogsClient
@@ -65,7 +74,7 @@ def download_audio(
         return out_path
 
     cmd = [
-        "yt-dlp",
+        _YTDLP_BIN,
         "--no-playlist",
         "--extract-audio",
         "--audio-format", "wav",
