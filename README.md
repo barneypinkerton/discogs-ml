@@ -16,7 +16,7 @@ Discogs data dump → SQLite
           build_labels → label family graph
           sync_profile → collection + wantlist from API
           discover     → 50k candidate pool (affinity + style-discovery + compilations)
-          score        → filter, rank, enrich → top 100 recommendations.csv
+          score        → filter, rank, enrich → top 300 recommendations.csv
           audio_rank   → download audio, EffNet embeddings, cosine similarity → top10.csv
 ```
 
