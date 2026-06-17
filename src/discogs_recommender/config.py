@@ -77,7 +77,7 @@ class DiscoverConfig:
 
 @dataclass
 class AudioConfig:
-    top_n_final: int = 10
+    top_n_final: int = 20
     audio_weight: float = 0.6
     cache_audio: bool = True
     download_timeout_s: int = 120
