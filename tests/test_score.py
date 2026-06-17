@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from discogs_recommender.config import AppConfig, DiscoverConfig, DiscogsApiConfig, PathsConfig, ProfileConfig, ScoreConfig
+from discogs_recommender.config import AppConfig, AudioConfig, DiscoverConfig, DiscogsApiConfig, PathsConfig, ProfileConfig, ScoreConfig
 from discogs_recommender.profile.owned import _parse_artist_ids
 from discogs_recommender.recommend.score import (
     apply_diversity_cap,
@@ -23,7 +23,9 @@ def _minimal_config() -> AppConfig:
         label_family_file=__import__("pathlib").Path("/tmp/label_family.json"),
         embeddings_dir=__import__("pathlib").Path("/tmp/embeddings"),
         collection_embeddings=__import__("pathlib").Path("/tmp/c.npz"),
+        candidate_embeddings_cache=__import__("pathlib").Path("/tmp/candidate_cache.npz"),
         effnet_model=__import__("pathlib").Path("/tmp/m.pb"),
+        top10_file=__import__("pathlib").Path("/tmp/exports/top10.csv"),
         exports_dir=__import__("pathlib").Path("/tmp/exports"),
         profile_dir=__import__("pathlib").Path("/tmp/profile"),
         profile_releases=__import__("pathlib").Path("/tmp/profile/releases.json"),
@@ -37,6 +39,7 @@ def _minimal_config() -> AppConfig:
         profile=ProfileConfig(),
         discover=DiscoverConfig(),
         score=ScoreConfig(max_per_artist=1, max_per_label=1),
+        audio=AudioConfig(),
     )
 
 

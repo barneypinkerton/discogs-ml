@@ -117,6 +117,34 @@ def compute_candidate_embeddings(
     return results
 
 
+def load_embedding_cache(cache_path: Path) -> dict[int, np.ndarray]:
+    """Load cached candidate embeddings keyed by release_id.
+
+    Returns an empty dict if the cache file doesn't exist yet.
+    """
+    if not cache_path.is_file():
+        return {}
+    try:
+        data = np.load(cache_path)
+        ids = data["release_ids"].tolist()
+        embs = data["embeddings"]
+        return {int(rid): embs[i] for i, rid in enumerate(ids)}
+    except Exception as exc:
+        logger.warning("Could not load embedding cache %s: %s — starting fresh", cache_path, exc)
+        return {}
+
+
+def save_embedding_cache(cache_path: Path, embeddings: dict[int, np.ndarray]) -> None:
+    """Write the full embeddings dict to *cache_path* as an NPZ file."""
+    if not embeddings:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    ids = np.array(list(embeddings.keys()), dtype=np.int64)
+    embs = np.array(list(embeddings.values()), dtype=np.float32)
+    np.savez(cache_path, release_ids=ids, embeddings=embs)
+    logger.debug("Saved embedding cache: %s entries → %s", len(ids), cache_path)
+
+
 def build_vibe_profile(
     music_dir: Path,
     model_path: Path,

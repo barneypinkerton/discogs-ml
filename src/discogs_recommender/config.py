@@ -32,6 +32,7 @@ class PathsConfig:
     label_family_file: Path
     embeddings_dir: Path
     collection_embeddings: Path
+    candidate_embeddings_cache: Path
     effnet_model: Path
     exports_dir: Path
     profile_dir: Path
@@ -82,6 +83,7 @@ class AudioConfig:
     download_timeout_s: int = 120
     max_videos_per_release: int = 6
     download_workers: int = 4
+    history_exclusion_runs: int = 3
 
 
 @dataclass
@@ -154,6 +156,13 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         collection_embeddings=_expand(
             paths_raw.get(
                 "collection_embeddings", "embeddings/my_collection_embeddings.npz"
+            ),
+            data_root,
+        ),
+        candidate_embeddings_cache=_expand(
+            paths_raw.get(
+                "candidate_embeddings_cache",
+                "embeddings/candidate_embeddings_cache.npz",
             ),
             data_root,
         ),
@@ -264,6 +273,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             download_timeout_s=int(audio_raw.get("download_timeout_s", 120)),
             max_videos_per_release=int(audio_raw.get("max_videos_per_release", 6)),
             download_workers=int(audio_raw.get("download_workers", 4)),
+            history_exclusion_runs=int(audio_raw.get("history_exclusion_runs", 3)),
         ),
         pipeline_default_stages=list(
             pipeline.get(
