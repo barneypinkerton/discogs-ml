@@ -44,8 +44,8 @@ discover:
   top_labels_for_expansion: 1500
   candidate_pool_limit: 50000
   compilation_pool_fraction: 0.10
-  discovery_pool_fraction: 0.45
-  min_style_match_count: 2
+  discovery_pool_fraction: 0.25
+  min_style_match_count: 3
   genre: Electronic
   sql_batch_size: 500
 

@@ -242,7 +242,14 @@ def _build_style_temp_table(
     profile: list[dict[str, Any]],
     config: AppConfig,
 ) -> None:
-    """Build tmp_style_affinity from profile release styles, weighted by source."""
+    """Build tmp_style_affinity with IDF-weighted scores from profile release styles.
+
+    IDF dampens broad tags (e.g. House) that appear on millions of releases and
+    amplifies specific sub-genres (e.g. Dub Techno, Minimal) that are rarer in
+    the full Electronic catalogue. The discovery SQL then sums these weighted
+    scores so releases matching multiple target styles rank above generic ones.
+    """
+    import math
     pc = config.profile
     weight_map = {
         int(row["release_id"]): (
@@ -268,14 +275,35 @@ def _build_style_temp_table(
         logger.warning("No styles found in profile — discovery bucket will be empty")
         return
 
+    # Compute IDF weights: rarer Electronic styles get higher weight
+    idf_rows = conn.execute(
+        """
+        SELECT rs.style, COUNT(DISTINCT rs.release_id) AS df
+        FROM release_style rs
+        JOIN release_genre rg ON rs.release_id = rg.release_id
+        WHERE rg.genre = ?
+        GROUP BY rs.style
+        """,
+        (config.discover.genre,),
+    ).fetchall()
+    idf_raw = {style: 1.0 / math.log2(2.0 + df) for style, df in idf_rows if style}
+    max_idf = max(idf_raw.values()) if idf_raw else 1.0
+    idf = {k: v / max_idf for k, v in idf_raw.items()}
+
     max_v = max(style_raw.values())
-    style_aff = {k: v / max_v for k, v in style_raw.items()}
+    style_aff = {
+        k: (v / max_v) * idf.get(k, 1.0)
+        for k, v in style_raw.items()
+    }
+    # Re-normalise after IDF application
+    max_aff = max(style_aff.values()) if style_aff else 1.0
+    style_aff = {k: v / max_aff for k, v in style_aff.items()}
 
     conn.execute("DROP TABLE IF EXISTS tmp_style_affinity")
     conn.execute("CREATE TEMP TABLE tmp_style_affinity (style TEXT PRIMARY KEY, score REAL)")
     conn.executemany("INSERT INTO tmp_style_affinity VALUES (?, ?)", style_aff.items())
     conn.commit()
-    logger.info("Style temp table: %s styles from profile", len(style_aff))
+    logger.info("Style temp table: %s IDF-weighted styles from profile", len(style_aff))
 
 
 _CANDIDATE_SQL = """
@@ -333,7 +361,7 @@ _DISCOVERY_SQL = """
     FROM release r
     JOIN release_genre rg ON r.id = rg.release_id
     JOIN (
-        SELECT rs.release_id, MAX(af.score) AS max_style
+        SELECT rs.release_id, SUM(af.score) AS style_score
         FROM release_style rs
         JOIN tmp_style_affinity af ON rs.style = af.style
         GROUP BY rs.release_id
@@ -347,7 +375,7 @@ _DISCOVERY_SQL = """
           OR r.master_id NOT IN (SELECT master_id FROM tmp_owned_master)
       )
       AND {compilation_clause}
-    ORDER BY sa.max_style DESC
+    ORDER BY sa.style_score DESC
     LIMIT ?
 """
 
