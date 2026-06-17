@@ -52,7 +52,6 @@ discover:
 score:
   max_per_artist: 2
   max_per_label: 3
-  max_per_style: 3
   top_n_export: 300
   enrich_have_want_limit: 300
   desirability_weight: 0.25

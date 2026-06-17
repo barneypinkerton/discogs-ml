@@ -228,7 +228,6 @@ def build_final_recommendations(
     ranked = ensure_master_ids(df, conn)
     artist_counts: dict[int | str, int] = {}
     label_counts: dict[int | str, int] = {}
-    style_counts: dict[str, int] = {}
     seen_masters: set[int] = set()
     seen_works: set[tuple[int | str | None, str]] = set()
     keep_rows: list[pd.Series] = []
@@ -255,10 +254,6 @@ def build_final_recommendations(
         if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
             continue
 
-        style = _primary_style(row)
-        if style is not None and style_counts.get(style, 0) >= sc.max_per_style:
-            continue
-
         master = valid_master_id(row.get("master_id"))
         if master is not None:
             if master in seen_masters:
@@ -274,8 +269,6 @@ def build_final_recommendations(
             artist_counts[canonical_artist] = artist_counts.get(canonical_artist, 0) + 1
         if canonical_label is not None:
             label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
-        if style is not None:
-            style_counts[style] = style_counts.get(style, 0) + 1
         keep_rows.append(row)
 
     return pd.DataFrame(keep_rows).reset_index(drop=True)
@@ -324,7 +317,6 @@ def build_bucketed_recommendations(
     # Shared cap state across both buckets
     artist_counts: dict[int | str, int] = {}
     label_counts: dict[int | str, int] = {}
-    style_counts: dict[str, int] = {}
     seen_masters: set[int] = set()
     seen_works: set[tuple] = set()
 
@@ -353,9 +345,6 @@ def build_bucketed_recommendations(
             )
             if canonical_label is not None and label_counts.get(canonical_label, 0) >= sc.max_per_label:
                 continue
-            style = _primary_style(row)
-            if style is not None and style_counts.get(style, 0) >= sc.max_per_style:
-                continue
             master = valid_master_id(row.get("master_id"))
             if master is not None:
                 if master in seen_masters:
@@ -370,8 +359,6 @@ def build_bucketed_recommendations(
                 artist_counts[canonical] = artist_counts.get(canonical, 0) + 1
             if canonical_label is not None:
                 label_counts[canonical_label] = label_counts.get(canonical_label, 0) + 1
-            if style is not None:
-                style_counts[style] = style_counts.get(style, 0) + 1
             picks.append(row)
         return picks
 
