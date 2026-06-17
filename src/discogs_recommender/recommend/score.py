@@ -476,17 +476,40 @@ def enrich_have_want(df: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
     return df
 
 
+def _build_style_idf(conn: sqlite3.Connection, genre: str = "Electronic") -> dict[str, float]:
+    """Return IDF weight per style: rarer styles score higher, common ones are dampened.
+
+    Uses 1/log2(2 + df) so even the most common style retains some weight.
+    Weights are normalised to [0, 1] so the most discriminating style = 1.0.
+    """
+    import math
+    rows = conn.execute(
+        """
+        SELECT rs.style, COUNT(DISTINCT rs.release_id) AS df
+        FROM release_style rs
+        JOIN release_genre rg ON rs.release_id = rg.release_id
+        WHERE rg.genre = ?
+        GROUP BY rs.style
+        """,
+        (genre,),
+    ).fetchall()
+    if not rows:
+        return {}
+    raw = {style: 1.0 / math.log2(2.0 + df) for style, df in rows if style}
+    max_w = max(raw.values())
+    return {k: v / max_w for k, v in raw.items()} if max_w > 0 else raw
+
+
 def _build_profile_affinities(
     conn: sqlite3.Connection,
     profile: list[dict],
     config: AppConfig,
 ) -> tuple[dict[str, float], dict[str, float], dict[int, float]]:
-    """Compute normalized style, country, and year affinity dicts from the profile.
+    """Compute IDF-weighted style, country, and year affinity dicts from the profile.
 
-    Each dict maps a value to a score in [0, 1] where 1.0 = most frequent in the
-    wantlist/collection (wantlist weighted at wantlist_weight, collection at
-    collection_weight). Year affinities are smoothed ±2 years so nearby years
-    share influence.
+    Style affinities are multiplied by an IDF weight so specific sub-genres
+    (e.g. Dub Techno, Minimal) score higher than broad tags (e.g. House) even
+    when broad tags appear more often in the collection.
 
     Returns:
         style_aff   — {style_name: 0..1}
@@ -541,7 +564,18 @@ def _build_profile_affinities(
         max_val = max(d.values())
         return {k: v / max_val for k, v in d.items()} if max_val > 0 else dict(d)
 
-    return _normalize(style_raw), _normalize(country_raw), _normalize(year_raw)
+    # Apply IDF to style affinities so specific sub-genres outweigh broad tags
+    idf = _build_style_idf(conn, genre=config.discover.genre)
+    if idf:
+        style_idf = {k: v * idf.get(k, 1.0) for k, v in style_raw.items()}
+        logger.info(
+            "Style IDF applied — top 5 by final weight: %s",
+            sorted(style_idf.items(), key=lambda x: x[1], reverse=True)[:5],
+        )
+    else:
+        style_idf = dict(style_raw)
+
+    return _normalize(style_idf), _normalize(country_raw), _normalize(year_raw)
 
 
 def compute_final_score(
@@ -572,10 +606,13 @@ def compute_final_score(
     desirability = np.log1p(want / (have + 1.0))
     overknown_penalty = np.log1p(np.maximum(have - sc.overknown_threshold, 0)) / np.log1p(5000)
 
-    # Style affinity — max affinity across the release's styles
+    # Style affinity — sum across all matching styles so intersection is rewarded.
+    # A release tagged [Tech House, Techno, Minimal] scores higher than one tagged
+    # just [House] even if House has the highest single affinity. Cap at 2.0 so a
+    # single pathological multi-tag release can't blow up the scale.
     if style_aff and "styles" in df.columns:
         def _style_score(val: object) -> float:
-            return max((style_aff.get(s, 0.0) for s in _parse_list_column(val)), default=0.0)
+            return min(sum(style_aff.get(s, 0.0) for s in _parse_list_column(val)), 2.0)
         style_boost = df["styles"].map(_style_score) * sc.style_affinity_weight
     else:
         style_boost = pd.Series(0.0, index=df.index)

@@ -69,8 +69,8 @@ class DiscoverConfig:
     top_labels_for_expansion: int = 1_500
     candidate_pool_limit: int = 50_000
     compilation_pool_fraction: float = 0.10
-    discovery_pool_fraction: float = 0.45
-    min_style_match_count: int = 2
+    discovery_pool_fraction: float = 0.25
+    min_style_match_count: int = 3
     genre: str = "Electronic"
     sql_batch_size: int = 500
 
